@@ -2,278 +2,219 @@
 
 ## Overview
 
-This project builds an interpretable cardiovascular risk model using the UCI Heart Disease dataset.
+This repository trains an interpretable heart disease classifier using logistic regression and reports uncertainty using bootstrap resampling.
 
-The focus is not complex machine learning.
-The focus is:
+What you get from this project:
 
-- Proper preprocessing of mixed-type data
-- Clean train/test separation
-- Logistic regression for interpretability
-- Bootstrap-based uncertainty estimation
-- Reproducible pipelines using scikit-learn
+- A leakage-safe preprocessing + modeling pipeline (scikit-learn Pipeline + ColumnTransformer)
+- Honest test-set evaluation (Accuracy + ROC AUC + classification report)
+- Bootstrap distribution of ROC AUC (mean / std / 95% CI)
+- Bootstrap odds ratios with confidence intervals (interpretability + stability)
+- Results saved as CSV artifacts for reporting
 
-This project demonstrates applied statistical reasoning in a healthcare context.
+This is intentionally a “small but rigorous” applied healthcare modeling project.
+
+---
+
+## Repository Layout
+
+Expected structure:
+
+    heart-disease-bootstrap/
+    ├── src/
+    │   ├── analysis_reg_bs.py
+    │   └── make_snapshot.py              (optional; generates metrics_summary.json)
+    ├── data/
+    │   ├── heart_disease_uci.csv         (NOT committed; you download via link)
+    │   └── README.txt                    (explains how to download data)
+    ├── results/
+    │   ├── log_bs_summary_output.csv
+    │   ├── bootstrap_odds_ratios.csv
+    │   └── metrics_summary.json          (optional)
+    ├── requirements.txt
+    ├── .gitignore
+    └── README.md
 
 ---
 
 ## Dataset
 
-Source: UCI Machine Learning Repository – Heart Disease dataset
+The script expects the [UCI Heart Disease Data](https://www.kaggle.com/datasets/redwankarimsony/heart-disease-data):
 
-The original label `num` encodes disease severity from 0 to 4.
+    data/heart_disease_uci.csv
 
-We convert it into a binary outcome:
+Download:
 
-    df["target"] = (df["num"] > 0).astype(int)
+    mkdir -p data
+    curl -L "https://www.kaggle.com/datasets/redwankarimsony/heart-disease-data" -o data/heart_disease_uci.csv
 
-Meaning:
+After download, verify:
 
-- 0 → No heart disease
-- 1 → Presence of heart disease
-
-We also remove non-feature columns such as:
-
-- `num` (original label)
-- `id` (identifier)
-- `dataset` (constant in this subset)
+    ls -la data/
+    head -n 5 data/heart_disease_uci.csv
 
 ---
 
-## Project Structure
+## Quickstart
 
-The script contains the following key components:
+### 1) Create a virtual environment (recommended)
 
-- Data loading
-- Target engineering
-- Diagnostic utilities
-- Preprocessing + modeling pipeline
-- Train/test evaluation
-- Bootstrap AUC estimation
-- Bootstrap odds ratio estimation
-- CSV artifact export
+    python3 -m venv .venv
+    source .venv/bin/activate
 
----
+### 2) Install dependencies
 
-## Data Loading
+    pip install -r requirements.txt
 
-The dataset is loaded with explicit handling of boolean strings:
+### 3) Download the dataset into data/
 
-    pd.read_csv(
-        path,
-        true_values=["TRUE", "True", "true"],
-        false_values=["FALSE", "False", "false"]
-    )
+    follow previous instructions
 
-This ensures boolean columns are parsed correctly.
+### 4) Run the analysis
+
+    python src/analysis_reg_bs.py
 
 ---
 
-## Diagnostics
+## What the Code Does
 
-Several helper functions provide basic inspection:
+### 1) Load + target engineering
 
-- Dataset shape
-- Column types
-- Missing values
-- Target distribution
-- Statistical summary (numeric + categorical)
+- Loads CSV with parsing of boolean tokens:
+  - true_values: TRUE / True / true
+  - false_values: FALSE / False / false
 
-These are simple print-based checks to understand the dataset before modeling.
+- Creates binary target:
+  
+    target = 1 if num > 0 else 0
 
----
+- Drops columns that should not be used as features:
+  - num (original label)
+  - id (identifier)
+  - dataset (constant in this subset)
 
-## Preprocessing Pipeline
-
-The core of the project is a scikit-learn `Pipeline` combined with a `ColumnTransformer`.
-
-### Column Separation
+### 2) Preprocessing (ColumnTransformer)
 
 Columns are split by dtype:
 
-- Boolean columns
-- Numeric columns
-- Categorical columns
+- Numeric columns (int64, float64)
+  - SimpleImputer(median)
+  - StandardScaler
 
-    bool_cols = X.select_dtypes(include=["bool", "boolean"]).columns.tolist()
-    numeric_cols = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
-    categorical_cols = X.select_dtypes(include=["object"]).columns.tolist()
+- Boolean columns (bool, boolean)
+  - SimpleImputer(most_frequent)
+  - Convert True/False to 0/1 (FunctionTransformer)
 
----
+- Categorical columns (object)
+  - SimpleImputer(most_frequent)
+  - OneHotEncoder(handle_unknown="ignore")
 
-### Numeric Pipeline
+ColumnTransformer applies each preprocessing pipeline to its columns and concatenates them into a single numeric matrix.
 
-    num_pipe = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler()),
-    ])
+### 3) Model (Logistic Regression)
 
-- Median imputation for missing values
-- Standardization for stable logistic regression convergence
+The model is:
 
----
+    LogisticRegression(max_iter=3000, class_weight="balanced")
 
-### Boolean Pipeline
+This is a strong baseline for healthcare risk modeling because it is interpretable and stable.
 
-    bool_pipe = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("to_int", FunctionTransformer(lambda a: a.astype(int))),
-    ])
+### 4) Evaluation
 
-- Most frequent imputation
-- Explicit conversion to integer (0/1)
+- Train/test split (80/20) with stratification
+- Metrics on the TEST set:
+  - Accuracy
+  - ROC AUC (primary)
+  - Classification report
 
----
+### 5) Bootstrap Uncertainty Quantification (Performance and Effects)
 
-### Categorical Pipeline
+This project quantifies uncertainty in both (i) predictive performance and (ii) estimated feature effects by nonparametric bootstrap resampling of the training set. The test set is kept fixed throughout to provide a consistent evaluation target across bootstrap refits.
 
-    cat_pipe = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("onehot", OneHotEncoder(handle_unknown="ignore")),
-    ])
+#### 5.1 Bootstrap ROC AUC (Performance Stability)
 
-- Most frequent imputation
-- One-hot encoding
-- Safe handling of unseen categories
+Objective:
+Estimate the sampling variability of ROC AUC under repeated draws from the empirical training distribution.
 
----
+Method:
+For each bootstrap iteration (N = 500 by default):
 
-### Final Model
+1. Sample, with replacement, an index set of size n = |X_train| from the training data.
+2. Refit the full pipeline on the bootstrap sample:
+   - imputers
+   - scaler
+   - one-hot encoder
+   - logistic regression model
+3. Compute predicted probabilities on the fixed test set.
+4. Compute ROC AUC on the fixed test labels.
+5. Store the AUC value.
 
-    model = LogisticRegression(
-        max_iter=3000,
-        class_weight="balanced"
-    )
+Summary statistics reported:
+- Mean bootstrap AUC
+- Standard deviation of bootstrap AUC
+- 95% percentile interval (2.5th and 97.5th percentiles)
 
-Why logistic regression?
+Artifact:
+- results/log_bs_summary_output.csv
+  Contains the per-iteration bootstrap AUC values used to compute the summary.
 
-- Interpretable coefficients
-- Odds ratio interpretation
-- Appropriate baseline for medical risk modeling
-
----
-
-## Train/Test Split
-
-We use stratified splitting:
-
-    train_test_split(
-        X, y,
-        test_size=0.2,
-        random_state=42,
-        stratify=y
-    )
-
-This ensures:
-
-- No data leakage
-- Stable class proportions
-- Honest evaluation on unseen data
+Interpretation:
+The bootstrap AUC distribution provides an empirical approximation of performance variability due to sampling. The 95% percentile interval provides a practical uncertainty interval for expected discrimination on data drawn from a similar population.
 
 ---
 
-## Model Evaluation
+#### 5.2 Bootstrap Odds Ratios (Effect Stability)
 
-Metrics reported:
+Objective:
+Estimate uncertainty in logistic regression coefficients and derived odds ratios under repeated draws from the empirical training distribution.
 
-- Accuracy
-- ROC AUC (primary metric)
-- Classification report
+Background:
+In logistic regression, each feature j has coefficient β_j. Exponentiating yields the odds ratio:
 
-Probabilities are converted to labels using a 0.5 threshold:
+    OR_j = exp(β_j)
 
-    preds = (proba >= 0.5).astype(int)
+OR_j represents a multiplicative change in the odds of the positive class for a one-unit increase in the feature (for continuous features) or for presence vs absence (for binary/one-hot features), holding other variables constant. Note that for standardized numeric features, “one unit” corresponds to one standard deviation of the original feature.
 
----
+Method:
+For each bootstrap iteration (N = 500 by default):
 
-## Bootstrap AUC Estimation
+1. Sample, with replacement, an index set of size n = |X_train|.
+2. Refit the full pipeline on the bootstrap sample.
+3. Extract the fitted logistic regression coefficient vector from:
+      pipe.named_steps["model"].coef_[0]
+4. Map coefficients to the post-transformation feature space using:
+      pipe.named_steps["preprocess"].get_feature_names_out()
+5. Convert coefficients to odds ratios via exp(β).
+6. Store the odds ratio for each transformed feature.
 
-To measure performance stability:
+Summary statistics reported per feature:
+- Mean odds ratio across bootstrap refits
+- 95% percentile interval (2.5th and 97.5th percentiles)
 
-1. Resample training data with replacement
-2. Refit the full preprocessing + model pipeline
-3. Evaluate AUC on the fixed test set
-4. Repeat 500 times
+Artifact:
+- results/bootstrap_odds_ratios.csv
 
-Key loop:
+Columns:
+- feature: transformed feature name (after preprocessing; e.g., one-hot expanded columns)
+- odds_ratio_mean: mean exp(coef) across bootstrap iterations
+- ci_low: 2.5th percentile of exp(coef)
+- ci_high: 97.5th percentile of exp(coef)
 
-    idx = rng.randint(0, n, size=n)
-    X_sample = X_train.iloc[idx]
-    y_sample = y_train.iloc[idx]
-    pipe.fit(X_sample, y_sample)
+Console output:
+The script prints the top rows of the same odds-ratio table (“Top Odds Ratios”), corresponding to the highest mean odds ratios.
 
-We compute:
+Interpretation:
+- OR > 1 suggests a positive association with the outcome (increased odds).
+- OR < 1 suggests a negative association (decreased odds).
+- A confidence interval spanning 1.0 indicates that the direction/magnitude of the association is not stable across bootstrap resamples, given the model specification and dataset size.
 
-- Mean AUC
-- Standard deviation
-- 95% confidence interval
+Caveats:
+- Odds ratios are conditional on the model design (included covariates, encoding, scaling, and regularization).
+- One-hot encoded features represent comparisons to an implicit baseline defined by the encoding/regularization configuration.
+- Bootstrap intervals here are empirical percentile intervals and should be interpreted as practical uncertainty measures rather than strict parametric confidence intervals.
 
-This estimates sampling variability.
 
----
+## License
 
-## Bootstrap Odds Ratios
-
-We also estimate uncertainty in model coefficients.
-
-For each bootstrap iteration:
-
-    coefs = pipe.named_steps["model"].coef_[0]
-    samples = np.exp(coefs)
-
-We then compute:
-
-- Mean odds ratio
-- 95% confidence interval per feature
-
-This allows identification of:
-
-- Stable predictors
-- Uncertain predictors
-- Features whose effects may not be robust
-
----
-
-## Output Files
-
-The script exports:
-
-- log_bs_summary_output.csv  
-  Distribution of bootstrap ROC AUC values
-
-- bootstrap_odds_ratios.csv  
-  Bootstrap odds ratio confidence intervals
-
----
-
-## Running the Script
-
-From the project directory:
-
-    python analysis_reg_bs.py
-
-Dependencies:
-
-    pandas
-    numpy
-    scikit-learn
-
----
-
-## Design Principles
-
-This project emphasizes:
-
-- Reproducibility
-- Proper preprocessing
-- Separation of training and testing
-- Explicit uncertainty estimation
-- Interpretability over complexity
-
-It intentionally avoids:
-
-- Deep learning
-- Black-box modeling
-- Overengineering
-
-The goal is disciplined applied statistical modeling.
+Educational and portfolio use.
+Dataset credit: UCI Machine Learning Repository (or the source link you provide).
