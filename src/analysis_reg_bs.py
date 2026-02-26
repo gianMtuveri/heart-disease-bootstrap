@@ -27,7 +27,7 @@ from sklearn.utils import resample
 from sklearn.metrics import accuracy_score, roc_auc_score, classification_report
 
 
-DATA_PATH = "heart_disease_uci.csv"
+DATA_PATH = "data/heart_disease_uci.csv"
 
 
 def load_data(path: str) -> pd.DataFrame:
@@ -309,12 +309,12 @@ def main():
     aucs = bootstrap_auc(pipe, X_train, y_train, X_test, y_test, n_iterations=500)
 
     or_df = bootstrap_odds_ratios(pipe, X_train, y_train)
-    or_df.to_csv("bootstrap_odds_ratios.csv", index=False)
+    or_df.to_csv("results/bootstrap_odds_ratios.csv", index=False)
     print("\nTop Odds Ratios:")
     print(or_df.head(10))
 
     # Save bootstrap distribution as an artifact (useful for reports)
-    pd.DataFrame({"bootstrap_auc": aucs}).to_csv("log_bs_summary_output.csv", index=False)
+    pd.DataFrame({"bootstrap_auc": aucs}).to_csv("results/log_bs_summary_output.csv", index=False)
     print("\nSaved bootstrap AUCs to log_bs_summary_output.csv")
 
 
