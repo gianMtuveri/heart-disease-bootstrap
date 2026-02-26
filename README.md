@@ -217,4 +217,4 @@ Caveats:
 ## License
 
 Educational and portfolio use.
-Dataset credit: UCI Machine Learning Repository (or the source link you provide).
+Dataset credit: UCI Machine Learning Repository.
